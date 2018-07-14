@@ -60,9 +60,9 @@ class IdentifierCompleter( GeneralCompleter ):
       completions, self.user_options[ 'min_num_identifier_candidate_chars' ] )
 
     def ConvertCompletionData( x ):
-        return responses.BuildCompletionData(
-                insertion_text = x,
-                extra_menu_info='[ID]' )
+      return responses.BuildCompletionData(
+              insertion_text = x,
+              extra_menu_info='[ID]' )
 
     return [ ConvertCompletionData( x ) for x in completions ]
 
@@ -123,7 +123,9 @@ class IdentifierCompleter( GeneralCompleter ):
     for tag_file in tag_files:
       try:
         current_mtime = os.path.getmtime( tag_file )
-      except:
+      except Exception:
+        self._logger.exception(
+            'Error while getting %s last modification time.', tag_file )
         continue
       last_mtime = self._tags_file_last_mtime[ tag_file ]
 

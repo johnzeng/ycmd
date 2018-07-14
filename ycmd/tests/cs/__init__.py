@@ -26,10 +26,13 @@ from contextlib import contextmanager
 import functools
 import os
 
-from ycmd import handlers
-from ycmd.tests.test_utils import ( ClearCompletionsCache, SetUpApp,
-                                    StartCompleterServer, StopCompleterServer,
-                                    WaitUntilCompleterServerReady )
+from ycmd.tests.test_utils import ( ClearCompletionsCache,
+                                    IsolatedApp,
+                                    SetUpApp,
+                                    StartCompleterServer,
+                                    StopCompleterServer,
+                                    WaitUntilCompleterServerReady,
+                                    YCMD_EXTRA_CONF )
 
 shared_app = None
 shared_filepaths = []
@@ -48,9 +51,10 @@ def setUpPackage():
   global shared_app
 
   shared_app = SetUpApp()
-  shared_app.post_json(
-    '/ignore_extra_conf_file',
-    { 'filepath': PathToTestFile( '.ycm_extra_conf.py' ) } )
+  shared_app.post_json( '/ignore_extra_conf_file',
+                        { 'filepath': YCMD_EXTRA_CONF } )
+  shared_app.post_json( '/ignore_extra_conf_file',
+                        { 'filepath': PathToTestFile( '.ycm_extra_conf.py' ) } )
 
 
 def tearDownPackage():
@@ -99,7 +103,7 @@ def IsolatedYcmd( custom_options = {} ):
 
   Example usage:
 
-    from ycmd.tests.python import IsolatedYcmd
+    from ycmd.tests.cs import IsolatedYcmd
 
     @IsolatedYcmd( { 'server_keep_logfiles': 1 } )
     def CustomServerKeepLogfiles_test( app ):
@@ -108,14 +112,11 @@ def IsolatedYcmd( custom_options = {} ):
   def Decorator( test ):
     @functools.wraps( test )
     def Wrapper( *args, **kwargs ):
-      old_server_state = handlers._server_state
-      app = SetUpApp( custom_options )
-      try:
-        app.post_json(
-          '/ignore_extra_conf_file',
-          { 'filepath': PathToTestFile( '.ycm_extra_conf.py' ) } )
+      with IsolatedApp( custom_options ) as app:
+        app.post_json( '/ignore_extra_conf_file',
+                       { 'filepath': YCMD_EXTRA_CONF } )
+        app.post_json( '/ignore_extra_conf_file',
+                       { 'filepath': PathToTestFile( '.ycm_extra_conf.py' ) } )
         test( app, *args, **kwargs )
-      finally:
-        handlers._server_state = old_server_state
     return Wrapper
   return Decorator

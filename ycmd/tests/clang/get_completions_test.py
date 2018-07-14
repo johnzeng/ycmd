@@ -1,6 +1,6 @@
 # encoding: utf-8
 #
-# Copyright (C) 2015 ycmd contributors
+# Copyright (C) 2015-2018 ycmd contributors
 #
 # This file is part of ycmd.
 #
@@ -26,16 +26,19 @@ from builtins import *  # noqa
 
 import json
 import requests
+import ycm_core
 from nose.tools import eq_
 from hamcrest import ( assert_that, contains, contains_inanyorder, empty,
-                       has_item, has_items, has_entry, has_entries,
-                       contains_string )
+                       has_item, has_items, has_entry, has_entries )
 
 from ycmd.completers.cpp.clang_completer import NO_COMPLETIONS_MESSAGE
 from ycmd.responses import UnknownExtraConf, NoExtraConfDetected
 from ycmd.tests.clang import IsolatedYcmd, PathToTestFile, SharedYcmd
-from ycmd.tests.test_utils import ( BuildRequest, CompletionEntryMatcher,
-                                    ErrorMatcher, ExpectedFailure )
+from ycmd.tests.test_utils import ( BuildRequest,
+                                    CombineRequest,
+                                    CompletionEntryMatcher,
+                                    ErrorMatcher,
+                                    WindowsOnly )
 from ycmd.utils import ReadFile
 
 NO_COMPLETIONS_ERROR = ErrorMatcher( RuntimeError, NO_COMPLETIONS_MESSAGE )
@@ -69,19 +72,16 @@ def RunTest( app, test ):
     'filepath': PathToTestFile( *extra_conf ) } )
 
 
-  contents = ReadFile( test[ 'request' ][ 'filepath' ] )
-
-  def CombineRequest( request, data ):
-    kw = request
-    request.update( data )
-    return BuildRequest( **kw )
+  request = test[ 'request' ]
+  contents = ( request[ 'contents' ] if 'contents' in request else
+               ReadFile( request[ 'filepath' ] ) )
 
   # Because we aren't testing this command, we *always* ignore errors. This
   # is mainly because we (may) want to test scenarios where the completer
   # throws an exception and the easiest way to do that is to throw from
-  # within the FlagsForFile function.
+  # within the Settings function.
   app.post_json( '/event_notification',
-                 CombineRequest( test[ 'request' ], {
+                 CombineRequest( request, {
                    'event_name': 'FileReadyToParse',
                    'contents': contents,
                  } ),
@@ -90,7 +90,7 @@ def RunTest( app, test ):
   # We also ignore errors here, but then we check the response code ourself.
   # This is to allow testing of requests returning errors.
   response = app.post_json( '/completions',
-                            CombineRequest( test[ 'request' ], {
+                            CombineRequest( request, {
                               'contents': contents
                             } ),
                             expect_errors = True )
@@ -308,10 +308,10 @@ int main()
                                   contents = contents,
                                   line_num = 11,
                                   column_num = 7,
-                                  compilation_flags = ['-x', 'c++'] )
+                                  compilation_flags = [ '-x', 'c++' ] )
 
   response_data = app.post_json( '/completions', completion_data ).json
-  assert_that( response_data[ 'completions'],
+  assert_that( response_data[ 'completions' ],
                has_items( CompletionEntryMatcher( 'c' ),
                           CompletionEntryMatcher( 'x' ),
                           CompletionEntryMatcher( 'y' ) ) )
@@ -342,7 +342,7 @@ int main()
                                   contents = contents,
                                   line_num = 11,
                                   column_num = 7,
-                                  compilation_flags = ['-x', 'c++'] )
+                                  compilation_flags = [ '-x', 'c++' ] )
 
   results = app.post_json( '/completions',
                            completion_data ).json[ 'completions' ]
@@ -449,7 +449,7 @@ int main()
                                   contents = contents,
                                   line_num = 9,
                                   column_num = 8,
-                                  compilation_flags = ['-x', 'c++'] )
+                                  compilation_flags = [ '-x', 'c++' ] )
 
   results = app.post_json( '/completions',
                            completion_data ).json[ 'completions' ]
@@ -474,7 +474,7 @@ def GetCompletions_ClientDataGivenToExtraConf_test( app ):
                                   line_num = 9,
                                   column_num = 7,
                                   extra_conf_data = {
-                                    'flags': ['-x', 'c++']
+                                    'flags': [ '-x', 'c++' ]
                                   } )
 
   results = app.post_json( '/completions',
@@ -483,7 +483,7 @@ def GetCompletions_ClientDataGivenToExtraConf_test( app ):
 
 
 @IsolatedYcmd( { 'max_num_candidates': 0 } )
-def GetCompletions_Include_ClientDataGivenToExtraConf_test( app ):
+def GetCompletions_ClientDataGivenToExtraConf_Include_test( app ):
   app.post_json(
     '/load_extra_conf_file',
     { 'filepath': PathToTestFile( 'client_data',
@@ -496,7 +496,7 @@ def GetCompletions_Include_ClientDataGivenToExtraConf_test( app ):
                                   line_num = 1,
                                   column_num = 11,
                                   extra_conf_data = {
-                                    'flags': ['-x', 'c++']
+                                    'flags': [ '-x', 'c++' ]
                                   } )
 
   results = app.post_json( '/completions',
@@ -508,9 +508,186 @@ def GetCompletions_Include_ClientDataGivenToExtraConf_test( app ):
   )
 
 
-@ExpectedFailure( 'Filtering and sorting does not support candidates with '
-                  'non-ASCII characters.',
-                  contains_string( "value for 'completions' no item matches" ) )
+@IsolatedYcmd()
+def GetCompletions_ClientDataGivenToExtraConf_Cache_test( app ):
+  app.post_json(
+    '/load_extra_conf_file',
+    { 'filepath': PathToTestFile( 'client_data', '.ycm_extra_conf.py' ) } )
+
+  filepath = PathToTestFile( 'client_data', 'macro.cpp' )
+  contents = ReadFile( filepath )
+  request = {
+    'filetype'  : 'cpp',
+    'filepath'  : filepath,
+    'contents'  : contents,
+    'line_num'  : 11,
+    'column_num': 8
+  }
+
+  # Complete with flags from the client.
+  completion_request = CombineRequest( request, {
+    'extra_conf_data': {
+      'flags': [ '-DSOME_MACRO' ]
+    }
+  } )
+
+  assert_that(
+    app.post_json( '/completions', completion_request ).json,
+    has_entries( {
+      'completions': has_item(
+        CompletionEntryMatcher( 'macro_defined' )
+      ),
+      'errors': empty()
+    } )
+  )
+
+  # Complete at the same position but for a different set of flags from the
+  # client.
+  completion_request = CombineRequest( request, {
+    'extra_conf_data': {
+      'flags': [ '-Wall' ]
+    }
+  } )
+
+  assert_that(
+    app.post_json( '/completions', completion_request ).json,
+    has_entries( {
+      'completions': has_item(
+        CompletionEntryMatcher( 'macro_not_defined' )
+      ),
+      'errors': empty()
+    } )
+  )
+
+  # Finally, complete once again at the same position but no flags are given by
+  # the client. An empty list of flags is returned by the extra conf file in
+  # that case.
+  completion_request = CombineRequest( request, {} )
+
+  assert_that(
+    app.post_json( '/completions', completion_request ).json,
+    has_entries( {
+      'completions': empty(),
+      'errors': contains(
+        ErrorMatcher( RuntimeError,
+                      'Still no compile flags, no completions yet.' )
+      )
+    } )
+  )
+
+
+@SharedYcmd
+@WindowsOnly
+def GetCompletions_ClangCLDriverFlag_SimpleCompletion_test( app ):
+  RunTest( app, {
+    'description': 'basic completion with --driver-mode=cl',
+    'extra_conf': [ 'driver_mode_cl', 'flag', '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype': 'cpp',
+      'filepath': PathToTestFile( 'driver_mode_cl',
+                                  'flag',
+                                  'driver_mode_cl.cpp' ),
+      'line_num': 8,
+      'column_num': 18,
+      'force_semantic': True,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 3,
+        'completions': contains_inanyorder(
+          CompletionEntryMatcher( 'driver_mode_cl_include_func', 'void' ),
+          CompletionEntryMatcher( 'driver_mode_cl_include_int', 'int' ),
+        ),
+        'errors': empty(),
+      } )
+    }
+  } )
+
+
+@SharedYcmd
+@WindowsOnly
+def GetCompletions_ClangCLDriverExec_SimpleCompletion_test( app ):
+  RunTest( app, {
+    'description': 'basic completion with --driver-mode=cl',
+    'extra_conf': [ 'driver_mode_cl', 'executable', '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype': 'cpp',
+      'filepath': PathToTestFile( 'driver_mode_cl',
+                                  'executable',
+                                  'driver_mode_cl.cpp' ),
+      'line_num': 8,
+      'column_num': 18,
+      'force_semantic': True,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 3,
+        'completions': contains_inanyorder(
+          CompletionEntryMatcher( 'driver_mode_cl_include_func', 'void' ),
+          CompletionEntryMatcher( 'driver_mode_cl_include_int', 'int' ),
+        ),
+        'errors': empty(),
+      } )
+    }
+  } )
+
+
+@SharedYcmd
+@WindowsOnly
+def GetCompletions_ClangCLDriverFlag_IncludeStatementCandidate_test( app ):
+  RunTest( app, {
+    'description': 'Completion inside include statement with CL driver',
+    'extra_conf': [ 'driver_mode_cl', 'flag', '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype': 'cpp',
+      'filepath': PathToTestFile( 'driver_mode_cl',
+                                  'flag',
+                                  'driver_mode_cl.cpp' ),
+      'line_num': 1,
+      'column_num': 34,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 11,
+        'completions': contains_inanyorder(
+          CompletionEntryMatcher( 'driver_mode_cl_include.h', '[File]' ),
+        ),
+        'errors': empty(),
+      } )
+    }
+  } )
+
+
+@SharedYcmd
+@WindowsOnly
+def GetCompletions_ClangCLDriverExec_IncludeStatementCandidate_test( app ):
+  RunTest( app, {
+    'description': 'Completion inside include statement with CL driver',
+    'extra_conf': [ 'driver_mode_cl', 'executable', '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype': 'cpp',
+      'filepath': PathToTestFile( 'driver_mode_cl',
+                                  'executable',
+                                  'driver_mode_cl.cpp' ),
+      'line_num': 1,
+      'column_num': 34,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 11,
+        'completions': contains_inanyorder(
+          CompletionEntryMatcher( 'driver_mode_cl_include.h', '[File]' ),
+        ),
+        'errors': empty(),
+      } )
+    }
+  } )
+
+
 @SharedYcmd
 def GetCompletions_UnicodeInLine_test( app ):
   RunTest( app, {
@@ -539,9 +716,6 @@ def GetCompletions_UnicodeInLine_test( app ):
   } )
 
 
-@ExpectedFailure( 'Filtering and sorting does not support candidates with '
-                  'non-ASCII characters.',
-                  contains_string( "value for 'completions' no item matches" ) )
 @SharedYcmd
 def GetCompletions_UnicodeInLineFilter_test( app ):
   RunTest( app, {
@@ -585,7 +759,7 @@ def GetCompletions_QuotedInclude_AtStart_test( app ):
         'completions': contains(
           CompletionEntryMatcher( '.ycm_extra_conf.py', '[File]' ),
           CompletionEntryMatcher( 'a.hpp',              '[File]' ),
-          CompletionEntryMatcher( 'dir with spaces',    '[Dir]'  ),
+          CompletionEntryMatcher( 'dir with spaces',    '[Dir]' ),
           CompletionEntryMatcher( 'main.cpp',           '[File]' ),
           CompletionEntryMatcher( 'quote',              '[Dir]' ),
           CompletionEntryMatcher( 'system',             '[Dir]' )
@@ -618,10 +792,10 @@ def GetCompletions_QuotedInclude_UserIncludeFlag_test( app ):
           CompletionEntryMatcher( '.ycm_extra_conf.py', '[File]' ),
           CompletionEntryMatcher( 'a.hpp',              '[File]' ),
           CompletionEntryMatcher( 'c.hpp',              '[File]' ),
-          CompletionEntryMatcher( 'dir with spaces',    '[Dir]'  ),
+          CompletionEntryMatcher( 'dir with spaces',    '[Dir]' ),
           CompletionEntryMatcher( 'main.cpp',           '[File]' ),
-          CompletionEntryMatcher( 'quote',              '[Dir]'  ),
-          CompletionEntryMatcher( 'system',             '[Dir]'  )
+          CompletionEntryMatcher( 'quote',              '[Dir]' ),
+          CompletionEntryMatcher( 'system',             '[Dir]' )
         ),
         'errors': empty(),
       } )
@@ -651,10 +825,10 @@ def GetCompletions_QuotedInclude_SystemIncludeFlag_test( app ):
           CompletionEntryMatcher( '.ycm_extra_conf.py', '[File]' ),
           CompletionEntryMatcher( 'a.hpp',              '[File]' ),
           CompletionEntryMatcher( 'c.hpp',              '[File]' ),
-          CompletionEntryMatcher( 'dir with spaces',    '[Dir]'  ),
+          CompletionEntryMatcher( 'dir with spaces',    '[Dir]' ),
           CompletionEntryMatcher( 'main.cpp',           '[File]' ),
-          CompletionEntryMatcher( 'quote',              '[Dir]'  ),
-          CompletionEntryMatcher( 'system',             '[Dir]'  )
+          CompletionEntryMatcher( 'quote',              '[Dir]' ),
+          CompletionEntryMatcher( 'system',             '[Dir]' )
         ),
         'errors': empty(),
       } )
@@ -684,10 +858,10 @@ def GetCompletions_QuotedInclude_QuoteIncludeFlag_test( app ):
           CompletionEntryMatcher( '.ycm_extra_conf.py', '[File]' ),
           CompletionEntryMatcher( 'a.hpp',              '[File]' ),
           CompletionEntryMatcher( 'b.hpp',              '[File]' ),
-          CompletionEntryMatcher( 'dir with spaces',    '[Dir]'  ),
+          CompletionEntryMatcher( 'dir with spaces',    '[Dir]' ),
           CompletionEntryMatcher( 'main.cpp',           '[File]' ),
-          CompletionEntryMatcher( 'quote',              '[Dir]'  ),
-          CompletionEntryMatcher( 'system',             '[Dir]'  )
+          CompletionEntryMatcher( 'quote',              '[Dir]' ),
+          CompletionEntryMatcher( 'system',             '[Dir]' )
         ),
         'errors': empty(),
       } )
@@ -723,8 +897,8 @@ def GetCompletions_QuotedInclude_MultipleIncludeFlags_test( app ):
           CompletionEntryMatcher( 'd.hpp',              '[File]' ),
           CompletionEntryMatcher( 'dir with spaces',    '[Dir]' ),
           CompletionEntryMatcher( 'main.cpp',           '[File]' ),
-          CompletionEntryMatcher( 'quote',              '[Dir]'  ),
-          CompletionEntryMatcher( 'system',             '[Dir]'  )
+          CompletionEntryMatcher( 'quote',              '[Dir]' ),
+          CompletionEntryMatcher( 'system',             '[Dir]' )
         ),
         'errors': empty(),
       } )
@@ -798,6 +972,28 @@ def GetCompletions_QuotedInclude_AfterSpace_test( app ):
         'completions': contains(
           CompletionEntryMatcher( 'dir with spaces', '[Dir]' )
         ),
+        'errors': empty(),
+      } )
+    },
+  } )
+
+
+@SharedYcmd
+def GetCompletions_QuotedInclude_Invalid_test( app ):
+  RunTest( app, {
+    'description': 'completion of an invalid include statement',
+    'request': {
+      'filetype'  : 'cpp',
+      'filepath'  : PathToTestFile( 'test-include', 'main.cpp' ),
+      'line_num'  : 11,
+      'column_num': 12,
+      'compilation_flags': [ '-x', 'cpp' ]
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 12,
+        'completions': empty(),
         'errors': empty(),
       } )
     },
@@ -961,4 +1157,102 @@ def GetCompletions_BracketInclude_AtDirectorySeparator_test( app ):
         'errors': empty(),
       } )
     },
+  } )
+
+
+@SharedYcmd
+def GetCompletions_TranslateClangExceptionToPython_test( app ):
+  RunTest( app, {
+    'description': 'The ClangParseError C++ exception is properly translated '
+                   'to a Python exception',
+    'extra_conf': [ '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype'  : 'cpp',
+      # libclang fails to parse a file that doesn't exist.
+      'filepath'  : PathToTestFile( 'non_existing_file' ),
+      'contents'  : '',
+      'force_semantic': True
+    },
+    'expect': {
+      'response': requests.codes.internal_server_error,
+      'data': ErrorMatcher( ycm_core.ClangParseError,
+                            "Failed to parse the translation unit." )
+    },
+  } )
+
+
+@SharedYcmd
+def GetCompletions_Unity_test( app ):
+  RunTest( app, {
+    'description': 'Completion returns from file included in TU, but not in '
+                   'opened file',
+    'extra_conf': [ '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype'  : 'cpp',
+      'filepath'  : PathToTestFile( 'unitya.cc' ),
+      'line_num'  : 10,
+      'column_num': 24,
+      'force_semantic': True,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 20,
+        'completions': contains(
+          CompletionEntryMatcher( 'this_is_an_it', 'int' ),
+        ),
+        'errors': empty(),
+      } )
+    }
+  } )
+
+
+@SharedYcmd
+def GetCompletions_UnityInclude_test( app ):
+  RunTest( app, {
+    'description': 'Completion returns for includes in unity setup',
+    'extra_conf': [ '.ycm_extra_conf.py' ],
+    'request': {
+      'filetype'  : 'cpp',
+      'filepath'  : PathToTestFile( 'unitya.cc' ),
+      'line_num'  : 1,
+      'column_num': 17,
+      'force_semantic': True,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 11,
+        'completions': has_items(
+          CompletionEntryMatcher( 'unity.h', '[File]' ),
+          CompletionEntryMatcher( 'unity.cc', '[File]' ),
+          CompletionEntryMatcher( 'unitya.cc', '[File]' ),
+        ),
+        'errors': empty(),
+      } )
+    }
+  } )
+
+
+@SharedYcmd
+def GetCompletions_cuda_test( app ):
+  RunTest( app, {
+    'description': 'Completion of CUDA files',
+    'request': {
+      'filetype'  : 'cuda',
+      'filepath'  : PathToTestFile( 'cuda', 'completion_test.cu' ),
+      'line_num'  : 16,
+      'column_num': 29,
+      'force_semantic': True,
+    },
+    'expect': {
+      'response': requests.codes.ok,
+      'data': has_entries( {
+        'completion_start_column': 29,
+        'completions': contains(
+          CompletionEntryMatcher( 'do_something', 'void' ),
+        ),
+        'errors': empty(),
+      } )
+    }
   } )
