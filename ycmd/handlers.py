@@ -122,7 +122,7 @@ def GetCompletions():
   return _JsonResponse(
       BuildCompletionResponse( completions if completions else [],
                                request_data[ 'start_column' ],
-                               errors = errors ) )
+                               errors = errors ), file_encoding = request_data['file_encoding'] )
 
 
 @app.post( '/filter_and_sort_candidates' )
@@ -262,9 +262,9 @@ def ErrorHandler( httperror ):
 app.default_error_handler = ErrorHandler
 
 
-def _JsonResponse( data ):
+def _JsonResponse( data , file_encoding = 'utf8'):
   SetResponseHeader( 'Content-Type', 'application/json' )
-  return json.dumps( data, default = _UniversalSerialize )
+  return json.dumps( data, encoding=file_encoding, default = _UniversalSerialize )
 
 
 def _UniversalSerialize( obj ):

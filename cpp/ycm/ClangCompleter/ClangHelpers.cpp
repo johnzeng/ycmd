@@ -133,8 +133,10 @@ bool CompletionStringAvailable( CXCompletionString completion_string ) {
   if ( !completion_string )
     return false;
 
-  return clang_getCompletionAvailability( completion_string ) ==
-         CXAvailability_Available;
+  return true;
+// this checking is good, but...clang is buggy...
+//  return clang_getCompletionAvailability( completion_string ) ==
+//         CXAvailability_Available;
 }
 
 
