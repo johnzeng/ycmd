@@ -133,8 +133,7 @@ void BuildFullDiagnosticDataFromChildren(
 // unavailable completion strings refer to entities that are private/protected,
 // deprecated etc.
 bool CompletionStringAvailable( CXCompletionString completion_string ) {
-  return clang_getCompletionAvailability( completion_string ) ==
-         CXAvailability_Available;
+    return true;
 }
 
 

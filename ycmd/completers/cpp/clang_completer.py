@@ -484,8 +484,8 @@ def BuildExtraData( completion_data ):
   fixit = completion_data.fixit_
   if fixit.chunks:
     extra_data.update( responses.BuildFixItResponse( [ fixit ] ) )
-  if completion_data.DocString():
-    extra_data[ 'doc_string' ] = completion_data.DocString()
+#  if completion_data.DocString():
+#    extra_data[ 'doc_string' ] = completion_data.DocString()
   return extra_data
 
 
